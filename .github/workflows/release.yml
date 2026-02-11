@@ -1,0 +1,67 @@
+name: Mobile UAC CI/CD
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch: # Manuel tetikleme için
+
+jobs:
+  build:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 1. Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+
+      - name: 2. Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: 3. Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: 4. Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, armv7-linux-androideabi
+
+      - name: 5. Install Build Tools
+        run: |
+          cargo install flutter_rust_bridge_codegen --version 2.11.1
+          cargo install cargo-ndk
+          sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: 6. Flutter Pub Get
+        run: flutter pub get
+
+      - name: 7. Generate Bridge Code
+        run: flutter_rust_bridge_codegen generate
+
+      - name: 8. Build Rust for Android
+        # Makefile'daki build-android mantığını aynen uyguluyoruz
+        run: |
+          cd rust && cargo ndk -t arm64-v8a -t armeabi-v7a build --release
+          cd ..
+          mkdir -p android/app/src/main/jniLibs/arm64-v8a
+          mkdir -p android/app/src/main/jniLibs/armeabi-v7a
+          cp rust/target/aarch64-linux-android/release/libmobile_uac.so android/app/src/main/jniLibs/arm64-v8a/
+          cp rust/target/armv7-linux-androideabi/release/libmobile_uac.so android/app/src/main/jniLibs/armeabi-v7a/
+
+      - name: 9. Build Flutter APK
+        run: flutter build apk --release
+
+      - name: 10. Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sentiric-uac-android-release
+          path: build/app/outputs/flutter-apk/app-release.apk
