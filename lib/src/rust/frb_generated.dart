@@ -64,7 +64,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.11.1';
 
   @override
-  int get rustContentHash => 97108466;
+  int get rustContentHash => 1393569516;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -75,7 +75,9 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
 }
 
 abstract class RustLibApi extends BaseApi {
-  Future<String> crateApiSimpleStartSipCall({
+  Future<void> crateApiSimpleInitLogger();
+
+  Stream<String> crateApiSimpleStartSipCall({
     required String targetIp,
     required int targetPort,
     required String toUser,
@@ -92,20 +94,11 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   });
 
   @override
-  Future<String> crateApiSimpleStartSipCall({
-    required String targetIp,
-    required int targetPort,
-    required String toUser,
-    required String fromUser,
-  }) {
+  Future<void> crateApiSimpleInitLogger() {
     return handler.executeNormal(
       NormalTask(
         callFfi: (port_) {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_String(targetIp, serializer);
-          sse_encode_u_16(targetPort, serializer);
-          sse_encode_String(toUser, serializer);
-          sse_encode_String(fromUser, serializer);
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
@@ -114,20 +107,73 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           );
         },
         codec: SseCodec(
-          decodeSuccessData: sse_decode_String,
+          decodeSuccessData: sse_decode_unit,
           decodeErrorData: null,
         ),
-        constMeta: kCrateApiSimpleStartSipCallConstMeta,
-        argValues: [targetIp, targetPort, toUser, fromUser],
+        constMeta: kCrateApiSimpleInitLoggerConstMeta,
+        argValues: [],
         apiImpl: this,
       ),
     );
   }
 
+  TaskConstMeta get kCrateApiSimpleInitLoggerConstMeta =>
+      const TaskConstMeta(debugName: "init_logger", argNames: []);
+
+  @override
+  Stream<String> crateApiSimpleStartSipCall({
+    required String targetIp,
+    required int targetPort,
+    required String toUser,
+    required String fromUser,
+  }) {
+    final sink = RustStreamSink<String>();
+    unawaited(
+      handler.executeNormal(
+        NormalTask(
+          callFfi: (port_) {
+            final serializer = SseSerializer(generalizedFrbRustBinding);
+            sse_encode_String(targetIp, serializer);
+            sse_encode_u_16(targetPort, serializer);
+            sse_encode_String(toUser, serializer);
+            sse_encode_String(fromUser, serializer);
+            sse_encode_StreamSink_String_Sse(sink, serializer);
+            pdeCallFfi(
+              generalizedFrbRustBinding,
+              serializer,
+              funcId: 2,
+              port: port_,
+            );
+          },
+          codec: SseCodec(
+            decodeSuccessData: sse_decode_unit,
+            decodeErrorData: sse_decode_AnyhowException,
+          ),
+          constMeta: kCrateApiSimpleStartSipCallConstMeta,
+          argValues: [targetIp, targetPort, toUser, fromUser, sink],
+          apiImpl: this,
+        ),
+      ),
+    );
+    return sink.stream;
+  }
+
   TaskConstMeta get kCrateApiSimpleStartSipCallConstMeta => const TaskConstMeta(
     debugName: "start_sip_call",
-    argNames: ["targetIp", "targetPort", "toUser", "fromUser"],
+    argNames: ["targetIp", "targetPort", "toUser", "fromUser", "sink"],
   );
+
+  @protected
+  AnyhowException dco_decode_AnyhowException(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return AnyhowException(raw as String);
+  }
+
+  @protected
+  RustStreamSink<String> dco_decode_StreamSink_String_Sse(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    throw UnimplementedError();
+  }
 
   @protected
   String dco_decode_String(dynamic raw) {
@@ -157,6 +203,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void dco_decode_unit(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return;
+  }
+
+  @protected
+  AnyhowException sse_decode_AnyhowException(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_String(deserializer);
+    return AnyhowException(inner);
+  }
+
+  @protected
+  RustStreamSink<String> sse_decode_StreamSink_String_Sse(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    throw UnimplementedError('Unreachable ()');
   }
 
   @protected
@@ -200,6 +261,32 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   bool sse_decode_bool(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getUint8() != 0;
+  }
+
+  @protected
+  void sse_encode_AnyhowException(
+    AnyhowException self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.message, serializer);
+  }
+
+  @protected
+  void sse_encode_StreamSink_String_Sse(
+    RustStreamSink<String> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(
+      self.setupAndSerialize(
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_String,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+      ),
+      serializer,
+    );
   }
 
   @protected
