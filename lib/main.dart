@@ -1,28 +1,36 @@
 import 'package:flutter/material.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:sentiric_mobile_sip_uac/src/rust/api/simple.dart';
 import 'package:sentiric_mobile_sip_uac/src/rust/frb_generated.dart';
 
 Future<void> main() async {
+  // Flutter engine ve platform kanallarını hazırla
   WidgetsFlutterBinding.ensureInitialized();
-  await RustLib.init();
-  await initLogger();
+  
+  try {
+    // 1. Rust Kütüphanesini ve Bridge'i yükle
+    await RustLib.init();
+    // 2. Rust Loglarını Android Logcat'e bağla
+    await initLogger(); 
+  } catch (e) {
+    debugPrint("Rust Init Error: $e");
+  }
+  
   runApp(const SentiricApp());
 }
 
 class SentiricApp extends StatelessWidget {
   const SentiricApp({super.key});
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      title: 'Sentiric Mobile UAC',
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF0F0F0F),
         primaryColor: Colors.greenAccent,
-        inputDecorationTheme: const InputDecorationTheme(
-          border: OutlineInputBorder(),
-          labelStyle: TextStyle(color: Colors.greenAccent),
-          focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.greenAccent)),
-        ),
+        colorScheme: const ColorScheme.dark(primary: Colors.greenAccent),
       ),
       home: const DialerScreen(),
     );
@@ -31,6 +39,7 @@ class SentiricApp extends StatelessWidget {
 
 class DialerScreen extends StatefulWidget {
   const DialerScreen({super.key});
+
   @override
   _DialerScreenState createState() => _DialerScreenState();
 }
@@ -46,12 +55,14 @@ class _DialerScreenState extends State<DialerScreen> {
   bool _isCalling = false;
   final ScrollController _scrollController = ScrollController();
 
+  // Logları ekrana basan ve otomatik aşağı kaydıran yardımcı metod
   void _addLog(String msg) {
     if (!mounted) return;
     setState(() {
       _logs.add(msg);
     });
-    Future.delayed(const Duration(milliseconds: 50), () {
+    // Liste güncellendikten sonra en alta kaydır
+    WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
         _scrollController.animateTo(
           _scrollController.position.maxScrollExtent,
@@ -63,9 +74,22 @@ class _DialerScreenState extends State<DialerScreen> {
   }
 
   Future<void> _handleCall() async {
-    // Basit Validasyon
-    if (_ipController.text.isEmpty || _portController.text.isEmpty) {
-      _addLog("ERROR: IP and Port are required!");
+    // 1. MİKROFON İZNİ (Zorunlu)
+    var status = await Permission.microphone.status;
+    if (!status.isGranted) {
+      _addLog("🔐 Requesting Microphone permission...");
+      status = await Permission.microphone.request();
+    }
+
+    if (!status.isGranted) {
+      _addLog("❌ Error: Microphone permission denied.");
+      if (status.isPermanentlyDenied) openAppSettings();
+      return;
+    }
+
+    // 2. GİRDİ KONTROLÜ
+    if (_ipController.text.isEmpty) {
+      _addLog("❌ Error: Target IP is required!");
       return;
     }
 
@@ -76,10 +100,9 @@ class _DialerScreenState extends State<DialerScreen> {
 
     try {
       final int targetPort = int.parse(_portController.text);
-      
-      _addLog("🚀 Initializing Call Flow...");
-      
-      // Rust Çekirdek Çağrısı
+      _addLog("🚀 Starting Hardware-Linked SIP Call...");
+
+      // 3. RUST CORE CALL (Stream Başlatılıyor)
       final stream = startSipCall(
         targetIp: _ipController.text,
         targetPort: targetPort,
@@ -87,22 +110,22 @@ class _DialerScreenState extends State<DialerScreen> {
         fromUser: _fromController.text,
       );
 
+      // Olayları dinle
       stream.listen(
         (event) {
           _addLog(event);
-          if (event == "FINISH") {
+          if (event.contains("FINISH") || event.contains("ERROR")) {
             setState(() => _isCalling = false);
-            _addLog("🏁 Session Closed.");
           }
         },
         onError: (e) {
-          _addLog("❌ Stream Error: $e");
+          _addLog("🔥 Stream Error: $e");
           setState(() => _isCalling = false);
         },
         onDone: () => setState(() => _isCalling = false),
       );
     } catch (e) {
-      _addLog("🔥 Critical Exception: $e");
+      _addLog("🔥 Critical failure: $e");
       setState(() => _isCalling = false);
     }
   }
@@ -111,17 +134,15 @@ class _DialerScreenState extends State<DialerScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('📡 SENTIRIC FIELD TESTER'),
-        centerTitle: true,
+        title: const Text('📡 SENTIRIC FIELD MONITOR'),
         backgroundColor: Colors.black,
-        elevation: 0,
+        centerTitle: true,
       ),
       body: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16.0),
+        padding: const EdgeInsets.all(16.0),
         child: Column(
           children: [
-            const SizedBox(height: 10),
-            // Input Grid
+            // Network Config Section
             Row(
               children: [
                 Expanded(
@@ -129,101 +150,94 @@ class _DialerScreenState extends State<DialerScreen> {
                   child: TextField(
                     controller: _ipController,
                     enabled: !_isCalling,
-                    decoration: const InputDecoration(labelText: 'Target IP / Host'),
+                    decoration: const InputDecoration(labelText: 'Edge IP', border: OutlineInputBorder()),
                   ),
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: 8),
                 Expanded(
                   flex: 1,
                   child: TextField(
                     controller: _portController,
                     enabled: !_isCalling,
                     keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: 'Port'),
+                    decoration: const InputDecoration(labelText: 'Port', border: OutlineInputBorder()),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 8),
+            // Identity Section
             Row(
               children: [
                 Expanded(
                   child: TextField(
                     controller: _toController,
                     enabled: !_isCalling,
-                    decoration: const InputDecoration(labelText: 'Dial (To)'),
+                    decoration: const InputDecoration(labelText: 'To', border: OutlineInputBorder()),
                   ),
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: 8),
                 Expanded(
                   child: TextField(
                     controller: _fromController,
                     enabled: !_isCalling,
-                    decoration: const InputDecoration(labelText: 'Identity (From)'),
+                    decoration: const InputDecoration(labelText: 'From', border: OutlineInputBorder()),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 15),
-            // Action Button
+            const SizedBox(height: 12),
+            // Call Button
             SizedBox(
               width: double.infinity,
               height: 55,
               child: ElevatedButton.icon(
                 onPressed: _isCalling ? null : _handleCall,
-                icon: Icon(_isCalling ? Icons.hourglass_empty : Icons.call),
-                label: Text(_isCalling ? "COMMUNICATING..." : "INITIATE SIP CALL", 
-                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                icon: Icon(_isCalling ? Icons.settings_bluetooth : Icons.call),
+                label: Text(_isCalling ? "COMMUNICATION ACTIVE" : "START FULL-DUPLEX CALL"),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.greenAccent.shade700,
+                  backgroundColor: _isCalling ? Colors.grey : Colors.green.shade700,
                   foregroundColor: Colors.white,
-                  disabledBackgroundColor: Colors.grey.shade900,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                 ),
               ),
             ),
             const SizedBox(height: 20),
-            // Monitor Title
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text("LIVE TELECOM MONITOR", style: TextStyle(color: Colors.grey, fontSize: 12, fontWeight: FontWeight.bold)),
-                if (_isCalling)
-                  const SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.greenAccent)),
-              ],
+            // Monitor Label
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: Text("REAL-TIME TELECOM EVENTS", style: TextStyle(color: Colors.grey, fontSize: 10, fontWeight: FontWeight.bold)),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 4),
             // Log Console
             Expanded(
               child: Container(
                 width: double.infinity,
-                padding: const EdgeInsets.all(10),
+                padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
                   color: Colors.black,
-                  borderRadius: BorderRadius.circular(5),
-                  border: Border.all(color: Colors.greenAccent.withOpacity(0.2)),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.greenAccent.withOpacity(0.1)),
                 ),
                 child: ListView.builder(
                   controller: _scrollController,
                   itemCount: _logs.length,
                   itemBuilder: (context, index) {
-                    final isError = _logs[index].contains("ERROR") || _logs[index].contains("CRITICAL");
+                    final log = _logs[index];
+                    Color textColor = Colors.greenAccent.shade100;
+                    if (log.contains("ERROR") || log.contains("Critical")) textColor = Colors.redAccent;
+                    if (log.contains("STATUS")) textColor = Colors.white;
+
                     return Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      padding: const EdgeInsets.symmetric(vertical: 1),
                       child: Text(
-                        _logs[index],
-                        style: TextStyle(
-                          fontFamily: 'monospace',
-                          fontSize: 11,
-                          color: isError ? Colors.redAccent : Colors.greenAccent.withOpacity(0.9),
-                        ),
+                        log,
+                        style: TextStyle(fontFamily: 'monospace', fontSize: 11, color: textColor),
                       ),
                     );
                   },
                 ),
               ),
             ),
-            const SizedBox(height: 16),
           ],
         ),
       ),
