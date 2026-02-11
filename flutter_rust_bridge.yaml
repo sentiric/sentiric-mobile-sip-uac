@@ -1,0 +1,5 @@
+# FRB v2.11+ New Syntax
+rust_input: "crate::api::simple"
+rust_root: "rust"
+dart_root: "."
+dart_output: "lib/src/rust"

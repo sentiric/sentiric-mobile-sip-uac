@@ -1,0 +1,17 @@
+[package]
+name = "mobile_uac"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["staticlib", "cdylib"]
+
+[dependencies]
+# Bizim yazdığımız beyin kütüphanesi
+sentiric-sip-uac-core = { git = "https://github.com/sentiric/sentiric-sip-uac-core.git", branch = "main" }
+
+# Köprü bağımlılıkları
+flutter_rust_bridge = "=2.11.1" # Mevcut stabil sürüm
+tokio = { version = "1", features = ["full"] }
+anyhow = "1.0"
+tracing = "0.1"
