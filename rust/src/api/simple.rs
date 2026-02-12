@@ -1,3 +1,4 @@
+// sentiric-mobile-sip-uac/rust/src/api/simple.rs
 use sentiric_sip_uac_core::{UacClient, UacEvent};
 use tokio::sync::mpsc;
 use crate::frb_generated::StreamSink;
@@ -22,10 +23,13 @@ pub async fn start_sip_call(
     from_user: String,
     sink: StreamSink<String>, // FRB v2 Stream yapısı
 ) -> anyhow::Result<()> {
+    // 1. Kanalları oluştur
     let (tx, mut rx) = mpsc::channel::<UacEvent>(100);
+    
+    // 2. Client'ı oluştur
     let client = UacClient::new(tx);
 
-    // Olayları Flutter'a ve Logcat'e yönlendir
+    // 3. Olayları dinle, formatla ve Flutter'a gönder
     tokio::spawn(async move {
         while let Some(event) = rx.recv().await {
             let msg = match event {
@@ -34,12 +38,19 @@ pub async fn start_sip_call(
                 UacEvent::Error(e) => format!("ERROR: {}", e),
                 UacEvent::CallEnded => "FINISH".to_string(),
             };
-            info!("{}", msg); // Android Logcat'e basar
-            let _ = sink.add(msg); // Flutter UI'a gönderir
+            
+            // a) Android Logcat'e bas (IDE'den izlemek için)
+            info!("{}", msg); 
+            
+            // b) Flutter UI'a gönder (Ekranda görmek için)
+            // Hata alırsak (UI kapanmışsa) döngüden çık
+            if sink.add(msg).is_err() {
+                break;
+            }
         }
     });
 
-    // Çağrıyı başlat
+    // 4. Çağrıyı başlat
     client.start_call(target_ip, target_port, to_user, from_user).await?;
     
     Ok(())
