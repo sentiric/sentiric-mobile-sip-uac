@@ -1,38 +1,41 @@
-.PHONY: setup generate build-android run-android install-release
+.PHONY: setup generate build-android run-android install-release clean
 
 # 1. İlk kurulum
 setup:
 	flutter pub get
-	cargo install flutter_rust_bridge_codegen
+	cargo install flutter_rust_bridge_codegen --version 2.11.1
 	cargo install cargo-ndk
 
 # 2. Köprü Kodlarını Üret (Config dosyasını otomatik okur)
 generate:
 	flutter_rust_bridge_codegen generate
-	
-# 3. Android için Rust Kütüphanesini Derle (Hem ARM64 hem ARMv7)
+
+# 3. Android için Rust Kütüphanesini Derle (Otomatik Lib Copy ile)
 build-android:
-	# 1. Rust kütüphanesini derle (Statik linkleme parametresini kaldırdık)
+	# ANDROID_HOME environment variable'ının sistemde tanımlı olduğunu varsayıyoruz.
 	cd rust && cargo ndk -t arm64-v8a -t armeabi-v7a -o ../android/app/src/main/jniLibs build --release
 	
-	# 2. libc++_shared.so dosyasını bul ve manuel olarak kopyala (Kritik Adım)
+	# libc++_shared.so dosyasını bul ve manuel olarak kopyala (Kritik Adım)
 	@echo "🔍 C++ Shared Library aranıyor ve kopyalanıyor..."
-	
-	@# ARM64 için kopyalama
 	@mkdir -p android/app/src/main/jniLibs/arm64-v8a
-	@find $(ANDROID_HOME)/ndk -name "libc++_shared.so" | grep "aarch64" | head -n 1 | xargs -I {} cp {} android/app/src/main/jniLibs/arm64-v8a/
+	@find $$(echo $$ANDROID_HOME)/ndk -name "libc++_shared.so" | grep "aarch64" | head -n 1 | xargs -I {} cp {} android/app/src/main/jniLibs/arm64-v8a/
 	@echo "✅ ARM64 libc++_shared.so kopyalandı."
-
-	@# ARMv7 için kopyalama
 	@mkdir -p android/app/src/main/jniLibs/armeabi-v7a
-	@find $(ANDROID_HOME)/ndk -name "libc++_shared.so" | grep "arm-linux-androideabi" | head -n 1 | xargs -I {} cp {} android/app/src/main/jniLibs/armeabi-v7a/
+	@find $$(echo $$ANDROID_HOME)/ndk -name "libc++_shared.so" | grep "arm-linux-androideabi" | head -n 1 | xargs -I {} cp {} android/app/src/main/jniLibs/armeabi-v7a/
 	@echo "✅ ARMv7 libc++_shared.so kopyalandı."
 
+# [YENİ] Temizlik Hedefi
+clean:
+	@echo "🧹 Cleaning project artifacts..."
+	flutter clean
+	rm -rf rust/target
+	rm -rf android/app/src/main/jniLibs/*
+
 # 4. Cihaza OTOMATİK YÜKLE VE ÇALIŞTIR (Debug Modu - Hot Reload destekler)
-run-android: generate build-android
+# [GÜNCELLENDİ]: Artık her çalıştırmadan önce temizlik ve build yapar.
+run-android: clean generate build-android
 	flutter run --debug
 
 # 5. Cihaza FİNAL SÜRÜMÜ YÜKLE (Performance Mode)
-# Cihaz bağlıyken bunu çalıştırırsan direkt telefona kurar ve açar.
-deploy-device: generate build-android
+deploy-device: clean generate build-android
 	flutter run --release
