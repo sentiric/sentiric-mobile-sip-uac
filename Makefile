@@ -1,17 +1,24 @@
-.PHONY: setup generate build-android run-android install-release clean
+.PHONY: setup generate build-android run-android deploy-device clean-android clean-all
 
-# 1. İlk kurulum
+# ==============================================================================
+# SENTIRIC MOBILE UAC - ORCHESTRATION MAKEFILE (v2.0)
+# ==============================================================================
+
+# 1. İlk kurulum (SDK'lar ve araçlar için)
 setup:
+	@echo "--- : Gerekli araçlar kuruluyor... ---"
 	flutter pub get
 	cargo install flutter_rust_bridge_codegen --version 2.11.1
 	cargo install cargo-ndk
 
-# 2. Köprü Kodlarını Üret (Config dosyasını otomatik okur)
+# 2. Köprü Kodlarını Üret
 generate:
+	@echo "---: Rust/Dart köprü kodları üretiliyor... ---"
 	flutter_rust_bridge_codegen generate
-
-# 3. Android için Rust Kütüphanesini Derle (Otomatik Lib Copy ile)
+	
+# 3. Android için Rust Kütüphanesini Derle (C++ bağımlılıkları dahil)
 build-android:
+	@echo "--- : Rust çekirdeği Android için derleniyor... ---"
 	# ANDROID_HOME environment variable'ının sistemde tanımlı olduğunu varsayıyoruz.
 	cd rust && cargo ndk -t arm64-v8a -t armeabi-v7a -o ../android/app/src/main/jniLibs build --release
 	
@@ -24,18 +31,23 @@ build-android:
 	@find $$(echo $$ANDROID_HOME)/ndk -name "libc++_shared.so" | grep "arm-linux-androideabi" | head -n 1 | xargs -I {} cp {} android/app/src/main/jniLibs/armeabi-v7a/
 	@echo "✅ ARMv7 libc++_shared.so kopyalandı."
 
-# [YENİ] Temizlik Hedefi
-clean:
-	@echo "🧹 Cleaning project artifacts..."
+# 4. Temizlik Hedefleri (Ayrıştırıldı)
+clean-android:
+	@echo "--- : Flutter & Android artıkları temizleniyor... ---"
 	flutter clean
-	rm -rf rust/target
 	rm -rf android/app/src/main/jniLibs/*
 
-# 4. Cihaza OTOMATİK YÜKLE VE ÇALIŞTIR (Debug Modu - Hot Reload destekler)
-# [GÜNCELLENDİ]: Artık her çalıştırmadan önce temizlik ve build yapar.
-run-android: clean generate build-android
+clean-all: clean-android
+	@echo "--- : Rust derleme önbelleği temizleniyor... ---"
+	rm -rf rust/target
+
+# 5. Cihaza OTOMATİK YÜKLE VE ÇALIŞTIR (Debug Modu)
+# [GÜNCELLENDİ]: Artık her çalıştırmadan önce SADECE Android tarafını temizler.
+run-android: clean-android generate build-android
+	@echo "---: Uygulama cihaza yükleniyor (Debug)... ---"
 	flutter run --debug
 
-# 5. Cihaza FİNAL SÜRÜMÜ YÜKLE (Performance Mode)
-deploy-device: clean generate build-android
+# 6. Cihaza FİNAL SÜRÜMÜ YÜKLE (Performance Mode)
+deploy-device: clean-android generate build-android
+	@echo "--- : Uygulama cihaza yükleniyor (Release)... ---"
 	flutter run --release
