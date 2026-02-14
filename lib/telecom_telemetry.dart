@@ -1,4 +1,4 @@
-// sentiric-sip-mobile-uac/lib/telecom_telemetry.dart
+// lib/telecom_telemetry.dart
 
 enum TelemetryLevel { info, status, error, sip, media }
 
@@ -6,6 +6,8 @@ class TelemetryEntry {
   final String message;
   final TelemetryLevel level;
   final bool isSipPacket;
+  
+  // İstatistiksel veriler (Varsa)
   final int? rxCount;
   final int? txCount;
 
@@ -19,58 +21,71 @@ class TelemetryEntry {
 }
 
 class TelecomTelemetry {
-  /// Rust SDK'dan gelen ham string çıktılarını analiz eder.
+  /// Rust SDK'dan gelen olay string'lerini (Debug format) parse eder.
   static TelemetryEntry parse(String raw) {
-    // 1. MediaActive Olayı (Ses akışı teyidi)
-    if (raw == "MediaActive") {
+    
+    // 1. MEDYA AKIŞI BAŞLADI (Latching Success)
+    if (raw.contains("MediaActive")) {
       return TelemetryEntry(
-        message: "🎙️ AUDIO STREAM VERIFIED",
+        message: "🎙️ AUDIO PATH ESTABLISHED (2-WAY)",
         level: TelemetryLevel.status,
       );
     }
 
-    // 2. RtpStats Olayı (rx_cnt: 10, tx_cnt: 12)
+    // 2. İSTATİSTİKLER (RtpStats)
+    // Rust Formatı: RtpStats { rx_cnt: 123, tx_cnt: 456 }
     if (raw.contains("RtpStats")) {
-      final rxMatch = RegExp(r"rx_cnt: (\d+)").firstMatch(raw);
-      final txMatch = RegExp(r"tx_cnt: (\d+)").firstMatch(raw);
+      final rxMatch = RegExp(r"rx_cnt:\s*(\d+)").firstMatch(raw);
+      final txMatch = RegExp(r"tx_cnt:\s*(\d+)").firstMatch(raw);
       
       final rx = int.tryParse(rxMatch?.group(1) ?? "0");
       final tx = int.tryParse(txMatch?.group(1) ?? "0");
 
       return TelemetryEntry(
-        message: "Network Stats Update",
+        message: "Stats Update", // Bu mesaj UI'da log olarak gösterilmeyecek, sadece sayaçları güncelleyecek
         level: TelemetryLevel.media,
         rxCount: rx,
         txCount: tx,
       );
     }
 
-    // 3. Durum Değişiklikleri: CallStateChanged(Connected)
-    if (raw.startsWith("CallStateChanged(")) {
-      final state = raw.substring(17, raw.length - 1);
+    // 3. SIP DURUM DEĞİŞİMİ
+    // Rust Formatı: CallStateChanged(Connected)
+    if (raw.contains("CallStateChanged")) {
+      // Parantez içini al
+      final state = raw.split('(').last.split(')').first;
       return TelemetryEntry(
-        message: "🔔 SIP: $state",
+        message: "🔔 SIP STATE: $state",
         level: TelemetryLevel.status,
       );
     }
 
-    // 4. Hatalar: Error("...")
-    if (raw.startsWith("Error(\"")) {
-      final err = raw.substring(7, raw.length - 2);
+    // 4. HATALAR
+    if (raw.contains("Error") || raw.contains("Fail")) {
+      // Temizleme: Error("...") formatından tırnakları ve sarmalayıcıyı at
+      String clean = raw.replaceAll("Error(", "").replaceAll(")", "").replaceAll("\"", "");
       return TelemetryEntry(
-        message: "❌ ERROR: $err",
+        message: "❌ ERROR: $clean",
         level: TelemetryLevel.error,
       );
     }
 
-    // 5. Standart Loglar ve SIP Dökümleri: Log("...")
-    if (raw.startsWith("Log(\"")) {
-      String content = raw.substring(5, raw.length - 2);
-      content = content.replaceAll("\\n", "\n").replaceAll("\\\"", "\"").replaceAll("\\r", "");
+    // 5. STANDART LOGLAR ve SIP PAKETLERİ
+    if (raw.contains("Log(")) {
+      // Log("...") içeriğini çıkar
+      String content = raw;
+      int start = raw.indexOf("Log(\"");
+      if (start != -1) {
+        content = raw.substring(start + 5, raw.lastIndexOf("\""));
+      }
+      
+      // Kaçış karakterlerini düzelt (Rust debug formatından gelen \n'ler)
+      content = content.replaceAll("\\n", "\n").replaceAll("\\r", "").replaceAll("\\\"", "\"");
 
       bool isSip = content.contains("SIP/2.0") || 
                    content.contains("INVITE") || 
-                   content.contains("ACK");
+                   content.contains("ACK") ||
+                   content.contains("BYE");
 
       return TelemetryEntry(
         message: content,
@@ -79,6 +94,7 @@ class TelecomTelemetry {
       );
     }
 
+    // Tanınmayan format (Fallback)
     return TelemetryEntry(message: raw);
   }
 }
