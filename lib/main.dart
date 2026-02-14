@@ -1,4 +1,4 @@
-// lib/main.dart
+// sentiric-sip-mobile-uac/lib/main.dart
 
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -11,7 +11,6 @@ import 'dart:ffi';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   try {
-    // Android için C++ kütüphanesini yükle (Gerekli)
     if (Platform.isAndroid) {
       try {
         DynamicLibrary.open('libc++_shared.so');
@@ -36,13 +35,8 @@ class SentiricApp extends StatelessWidget {
       title: 'Sentiric Mobile',
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark().copyWith(
-        scaffoldBackgroundColor: const Color(0xFF0D0D0D),
+        scaffoldBackgroundColor: const Color(0xFF0A0A0A),
         primaryColor: const Color(0xFF00FF9D),
-        colorScheme: ColorScheme.dark(
-          primary: const Color(0xFF00FF9D),
-          secondary: Colors.cyanAccent,
-          surface: Colors.grey.shade900,
-        ),
       ),
       home: const DialerScreen(),
     );
@@ -55,78 +49,71 @@ class DialerScreen extends StatefulWidget {
   State<DialerScreen> createState() => _DialerScreenState();
 }
 
-class _DialerScreenState extends State<DialerScreen> {
-  // Varsayılan Değerler (Hardcode değil, Default Value)
+class _DialerScreenState extends State<DialerScreen> with SingleTickerProviderStateMixin {
   final TextEditingController _ipController = TextEditingController(text: "34.122.40.122");
   final TextEditingController _portController = TextEditingController(text: "5060");
   final TextEditingController _toController = TextEditingController(text: "9999");
   final TextEditingController _fromController = TextEditingController(text: "mobile-tester");
 
   final List<TelemetryEntry> _telemetryLogs = [];
-  bool _isCalling = false;
   final ScrollController _scrollController = ScrollController();
+  
+  bool _isCalling = false;
+  bool _isMediaActive = false;
+  int _rxPackets = 0;
+  int _txPackets = 0;
 
-  void _addLog(TelemetryEntry entry) {
+  void _processEvent(String raw) {
     if (!mounted) return;
+    final entry = TelecomTelemetry.parse(raw);
+
     setState(() {
-      _telemetryLogs.add(entry);
+      if (entry.level == TelemetryLevel.media && entry.rxCount != null) {
+        _rxPackets = entry.rxCount!;
+        _txPackets = entry.txCount!;
+      } else if (raw == "MediaActive") {
+        _isMediaActive = true;
+      } else {
+        if (!raw.contains("RtpStats")) {
+           _telemetryLogs.add(entry);
+        }
+      }
     });
-    // Otomatik Scroll
+
+    // Auto-scroll logic
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
         _scrollController.animateTo(
           _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 200),
+          duration: const Duration(milliseconds: 300),
           curve: Curves.easeOut,
         );
       }
     });
   }
 
-  Future<void> _handleCall() async {
-    // İzin Kontrolü (Mikrofon)
+  Future<void> _startCall() async {
     if (await Permission.microphone.request().isGranted) {
       setState(() {
         _telemetryLogs.clear();
         _isCalling = true;
+        _isMediaActive = false;
+        _rxPackets = 0;
+        _txPackets = 0;
       });
-      
-      _addLog(TelemetryEntry(message: "🚀 Initializing SDK...", level: TelemetryLevel.status));
 
-      try {
-        final stream = startSipCall(
-          targetIp: _ipController.text.trim(),
-          targetPort: int.parse(_portController.text.trim()),
-          toUser: _toController.text.trim(),
-          fromUser: _fromController.text.trim(),
-        );
+      final stream = startSipCall(
+        targetIp: _ipController.text.trim(),
+        targetPort: int.parse(_portController.text.trim()),
+        toUser: _toController.text.trim(),
+        fromUser: _fromController.text.trim(),
+      );
 
-        stream.listen(
-          (eventRaw) {
-            // Rust'tan gelen string'i parse et ve listeye ekle
-            final entry = TelecomTelemetry.parse(eventRaw);
-            _addLog(entry);
-            
-            // Eğer arama sonlandıysa butonu aktif et
-            if (eventRaw.contains("Terminated")) {
-               setState(() => _isCalling = false);
-            }
-          },
-          onDone: () {
-            _addLog(TelemetryEntry(message: "🏁 Stream Closed", level: TelemetryLevel.status));
-            setState(() => _isCalling = false);
-          },
-          onError: (e) {
-            _addLog(TelemetryEntry(message: "System Error: $e", level: TelemetryLevel.error));
-            setState(() => _isCalling = false);
-          },
-        );
-      } catch (e) {
-        _addLog(TelemetryEntry(message: "Exception: $e", level: TelemetryLevel.error));
-        setState(() => _isCalling = false);
-      }
-    } else {
-      _addLog(TelemetryEntry(message: "Microphone permission denied!", level: TelemetryLevel.error));
+      stream.listen(
+        (event) => _processEvent(event),
+        onDone: () => setState(() => _isCalling = false),
+        onError: (e) => _processEvent("Error(\"System: $e\")"),
+      );
     }
   }
 
@@ -134,66 +121,49 @@ class _DialerScreenState extends State<DialerScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('SENTIRIC FIELD MONITOR', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
+        title: const Text('📡 SENTIRIC FIELD MONITOR', style: TextStyle(fontSize: 14, letterSpacing: 1)),
         backgroundColor: Colors.black,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.delete_outline),
-            onPressed: () => setState(() => _telemetryLogs.clear()),
-          )
-        ],
+        elevation: 0,
       ),
       body: Column(
         children: [
-          // Girdi Alanı
-          Container(
-            padding: const EdgeInsets.all(16),
-            color: Colors.white.withOpacity(0.05),
-            child: Column(
-              children: [
-                Row(children: [
-                  Expanded(flex: 3, child: _inputField(_ipController, "Edge IP", Icons.dns)),
-                  const SizedBox(width: 10),
-                  Expanded(flex: 1, child: _inputField(_portController, "Port", Icons.numbers)),
-                ]),
-                const SizedBox(height: 10),
-                Row(children: [
-                  Expanded(child: _inputField(_toController, "To (Callee)", Icons.call_made)),
-                  const SizedBox(width: 10),
-                  Expanded(child: _inputField(_fromController, "From (You)", Icons.person)),
-                ]),
-                const SizedBox(height: 16),
-                SizedBox(
-                  width: double.infinity,
-                  height: 48,
-                  child: ElevatedButton.icon(
-                    onPressed: _isCalling ? null : _handleCall,
-                    icon: Icon(_isCalling ? Icons.timelapse : Icons.call),
-                    label: Text(_isCalling ? "CALL IN PROGRESS..." : "START TEST CALL"),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF00FF9D),
-                      foregroundColor: Colors.black,
-                      disabledBackgroundColor: Colors.grey.shade800,
-                      disabledForegroundColor: Colors.white54,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          
-          const Divider(height: 1, color: Colors.white24),
-          
-          // Log Konsolu
-          Expanded(
-            child: Container(
-              color: Colors.black,
-              child: ListView.builder(
-                controller: _scrollController,
-                padding: const EdgeInsets.all(8),
-                itemCount: _telemetryLogs.length,
-                itemBuilder: (context, index) => _buildLogItem(_telemetryLogs[index]),
+          _buildConfigurationPanel(),
+          if (_isCalling) _buildLiveStatusCard(),
+          const SizedBox(height: 10),
+          Expanded(child: _buildLogConsole()),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildConfigurationPanel() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      color: Colors.white.withOpacity(0.03),
+      child: Column(
+        children: [
+          Row(children: [
+            Expanded(flex: 3, child: _smallField(_ipController, "Edge IP")),
+            const SizedBox(width: 8),
+            Expanded(flex: 1, child: _smallField(_portController, "Port")),
+          ]),
+          const SizedBox(height: 8),
+          Row(children: [
+            Expanded(child: _smallField(_toController, "To")),
+            const SizedBox(width: 8),
+            Expanded(child: _smallField(_fromController, "From")),
+          ]),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            height: 45,
+            child: ElevatedButton(
+              onPressed: _isCalling ? null : _startCall,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _isCalling ? Colors.blueGrey : const Color(0xFF00FF9D),
+                foregroundColor: Colors.black,
               ),
+              child: Text(_isCalling ? "TELECOM SESSION ACTIVE" : "INITIATE SIP CALL"),
             ),
           ),
         ],
@@ -201,38 +171,77 @@ class _DialerScreenState extends State<DialerScreen> {
     );
   }
 
-  Widget _inputField(TextEditingController controller, String label, IconData icon) {
+  Widget _smallField(TextEditingController ctrl, String label) {
     return TextField(
-      controller: controller,
+      controller: ctrl,
       enabled: !_isCalling,
-      style: const TextStyle(fontSize: 13, fontFamily: 'monospace'),
+      style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
       decoration: InputDecoration(
         labelText: label,
-        prefixIcon: Icon(icon, size: 16, color: Colors.white54),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
-        filled: true,
-        fillColor: Colors.black12,
+        isDense: true,
+        border: const OutlineInputBorder(),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
       ),
     );
   }
 
-  Widget _buildLogItem(TelemetryEntry entry) {
-    Color textColor = Colors.grey;
-    if (entry.level == TelemetryLevel.status) textColor = const Color(0xFF00FF9D);
-    if (entry.level == TelemetryLevel.error) textColor = Colors.redAccent;
-    if (entry.level == TelemetryLevel.sip) textColor = Colors.cyanAccent;
+  Widget _buildLiveStatusCard() {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: _isMediaActive ? const Color(0xFF00FF9D) : Colors.orangeAccent, width: 0.5),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        children: [
+          _statusItem("SIP", "CONNECTED", Colors.blue),
+          _statusItem("RTP", _isMediaActive ? "ACTIVE" : "LATCHING...", _isMediaActive ? const Color(0xFF00FF9D) : Colors.orangeAccent),
+          _statusItem("PKTS", "RX:$_rxPackets TX:$_txPackets", Colors.white70),
+        ],
+      ),
+    );
+  }
+
+  Widget _statusItem(String label, String value, Color color) {
+    return Column(children: [
+      Text(label, style: const TextStyle(fontSize: 9, color: Colors.grey)),
+      Text(value, style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: color)),
+    ]);
+  }
+
+  Widget _buildLogConsole() {
+    return Container(
+      margin: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.black,
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: ListView.builder(
+        controller: _scrollController,
+        itemCount: _telemetryLogs.length,
+        itemBuilder: (context, index) {
+          final entry = _telemetryLogs[index];
+          return _logLine(entry);
+        },
+      ),
+    );
+  }
+
+  Widget _logLine(TelemetryEntry entry) {
+    Color color = Colors.white70;
+    if (entry.level == TelemetryLevel.status) color = const Color(0xFF00FF9D);
+    if (entry.level == TelemetryLevel.error) color = Colors.redAccent;
+    if (entry.level == TelemetryLevel.sip) color = Colors.cyanAccent;
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: 4.0),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
       child: Text(
         entry.message,
-        style: TextStyle(
-          color: textColor, 
-          fontFamily: 'monospace', 
-          fontSize: 11,
-          height: 1.2
-        ),
+        style: TextStyle(fontFamily: 'monospace', fontSize: 10, color: color),
       ),
     );
   }
